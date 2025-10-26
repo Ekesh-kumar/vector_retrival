@@ -6,7 +6,8 @@ from ragHandler import RAGVectorStoreCreator
 import os
 from google import genai
 from dotenv import load_dotenv
-
+import sqlite3
+from pprint import pprint
 load_dotenv()
 client = genai.Client()
 
@@ -175,17 +176,28 @@ async def list_vector_stores():
     # List from disk
     disk_stores = []
     vector_store_dir = "./vector_stores"
-    if os.path.exists(vector_store_dir):
-        disk_stores = [
-            d for d in os.listdir(vector_store_dir)
-            if os.path.isdir(os.path.join(vector_store_dir, d))
-        ]
-    
+
+
+    # Path to your Chroma DB
+    db_path = "vector_stores/chroma.sqlite3"
+
+    # Connect
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    # Fetch collections
+    cursor.execute("SELECT id, name FROM collections")
+    collections = cursor.fetchall()
+
+    pprint(collections)
+
+    conn.close()
+        
     return JSONResponse(
         status_code=200,
         content={
             "loaded_in_memory": memory_stores,
-            "available_on_disk": disk_stores
+            "available_on_disk": collections
         }
     )
 
