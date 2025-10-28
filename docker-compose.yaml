@@ -1,0 +1,37 @@
+services:
+  chromadb:
+    image: ghcr.io/chroma-core/chroma:latest
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/data
+    volumes:
+      - chroma_data:/data
+    ports:
+      - "8000:8000"
+
+  app:
+    build: .
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - chroma_data:/data/chroma
+    depends_on:
+      - chromadb
+      - db
+    ports:
+      - "8080:8000"  # optional: expose your FastAPI app
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Password
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  postgres_data:
+  chroma_data:

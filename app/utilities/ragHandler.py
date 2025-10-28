@@ -57,7 +57,6 @@ class RAGVectorStoreCreator:
         self.embedding_model = embedding_model or self._get_default_embeddings()
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
@@ -143,7 +142,7 @@ class RAGVectorStoreCreator:
         vector_store_name = vector_store_name or f"{Path(filename).stem}_chroma"
         persist_dir = persist_directory or f"./chroma_db/{vector_store_name}"
         os.makedirs(persist_dir, exist_ok=True)
-
+        
         # Create and persist Chroma database
         print(f"🧠 Creating Chroma DB at: {persist_dir}")
         vector_store = Chroma.from_documents(
@@ -152,6 +151,7 @@ class RAGVectorStoreCreator:
             persist_directory=persist_dir,
             collection_name=vector_store_name
         )
+
         vector_store.persist()
 
         print(f"✅ Chroma DB '{vector_store_name}' saved successfully at {persist_dir}")
@@ -181,7 +181,6 @@ class RAGVectorStoreCreator:
         )
         print(f"✅ Loaded Chroma DB: {vector_store_name}")
         return vector_store
-
 
     def retrieve_chunks(self, vector_store, query: str, k: int = 4, retrieval_type: str = "similarity") -> List[Document]:
         if retrieval_type == "similarity":
