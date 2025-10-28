@@ -19,19 +19,21 @@ A simple FastAPI application that allows you to:
 
 ***
 
-## 🧩 Project Structure
+## 🧩 Architecture diagram of this project.
+
+```mermaid
+flowchart TD
+    A[Main Router] --> B[Auth Router]
+    A --> C[Query Routes]
+    A --> D[Upload Routes]
+    A --> E[Vector Store Routes]
+
+    B --> B1[Handles all authentication related services]
+    C --> C1[Handles vector store query related services]
+    D --> D1[Handles document uploading and vector creation services]
+    E --> E1[Handles vector store viewing and deletion services]
 
 ```
-project-root/
-│
-├── app.py                        # FastAPI entry point
-├── ragHandler.py                 # Vector store creation & retrieval logic
-├── .env                          # Environment variables
-├── requirements.txt              # Dependencies
-└── vector_stores/                # Saved FAISS/Chroma vector stores
-```
-
-***
 
 ## ⚙️ Setup Instructions
 

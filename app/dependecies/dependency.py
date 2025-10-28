@@ -14,7 +14,6 @@ rag_creator = RAGVectorStoreCreator(
 
 vector_stores = {}
 
-
 # 1️⃣ Tell FastAPI where to get tokens from
 
 security = HTTPBearer()
