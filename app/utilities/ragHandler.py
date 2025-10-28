@@ -9,7 +9,10 @@ from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 # Environment
+from app.models import ChunkMeta
+from sqlmodel import Session
 from dotenv import load_dotenv
+import json
 load_dotenv()
 # PDF parsing
 import fitz  # PyMuPDF
@@ -23,6 +26,12 @@ class GeminiEmbeddings(Embeddings):
     def __init__(self, model_name: str = "gemini-embedding-001", api_key: Optional[str] = None):
         self.model_name = model_name
         self.client = genai.Client(api_key=api_key)
+        """Create a GeminiEmbeddings wrapper.
+
+        Args:
+            model_name: Name of the embedding model to use.
+            api_key: Optional API key for the GenAI client.
+        """
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         try:
@@ -33,6 +42,14 @@ class GeminiEmbeddings(Embeddings):
             return [embedding.values for embedding in result.embeddings]
         except Exception as e:
             raise RuntimeError(f"Error embedding documents: {str(e)}")
+        """Embed a list of documents into vectors.
+
+        Args:
+            texts: List of document strings to embed.
+
+        Returns:
+            A list of embedding vectors (one per input text).
+        """
 
     def embed_query(self, text: str) -> List[float]:
        
@@ -44,6 +61,14 @@ class GeminiEmbeddings(Embeddings):
             return result.embeddings[0].values
         except Exception as e:
             raise RuntimeError(f"Error embedding query: {str(e)}")
+        """Embed a single query string into a vector.
+
+        Args:
+            text: The query text to embed.
+
+        Returns:
+            A single embedding vector for the query.
+        """
 
 
 class RAGVectorStoreCreator:
@@ -63,12 +88,24 @@ class RAGVectorStoreCreator:
             length_function=len,
             separators=["\n\n", "\n", " ", ""]
         )
+        """Initialize the RAG vector store creator.
+
+        Args:
+            embedding_model: Optional embedding model wrapper to use.
+            chunk_size: Size (in characters) of chunks to split documents into.
+            chunk_overlap: Number of overlapping characters between chunks.
+        """
 
     def _get_default_embeddings(self) -> GeminiEmbeddings:
        
         return GeminiEmbeddings(
             model_name=os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001"),
         )
+        """Return a default GeminiEmbeddings instance using env settings.
+
+        This helper constructs the default embeddings client when none is
+        provided to the constructor.
+        """
 
 
     async def _load_pdf_with_pymupdf(self, file_content: bytes, filename: str) -> List[Document]:
@@ -92,6 +129,15 @@ class RAGVectorStoreCreator:
         except Exception as e:
             raise ValueError(f"Error reading PDF: {str(e)}")
         return documents
+        """Extract text from a PDF file using PyMuPDF.
+
+        Args:
+            file_content: Raw bytes of the PDF file.
+            filename: Original filename (used in metadata).
+
+        Returns:
+            A list of Document objects, one per page containing text.
+        """
 
     async def _load_text_file(self, file_content: bytes, filename: str) -> List[Document]:
         
@@ -108,13 +154,26 @@ class RAGVectorStoreCreator:
                 raise ValueError("Unable to decode text file with supported encodings")
 
         return [Document(page_content=text, metadata={"source": filename})]
+        """Decode a text file and wrap it as a single Document.
+
+        Tries UTF-8 first and falls back to a few common encodings.
+
+        Args:
+            file_content: Raw bytes of the text file.
+            filename: Original filename (used in metadata).
+
+        Returns:
+            A list containing one Document with the full file text.
+        """
 
 
     async def create_rag_from_file(
         self,
         file: UploadFile,
+        session : Session,
         vector_store_name: Optional[str] = None,
-        persist_directory: Optional[str] = None
+        persist_directory: Optional[str] = None,
+       
     ) -> dict:
 
         file_content = await file.read()
@@ -136,9 +195,19 @@ class RAGVectorStoreCreator:
 
         print(f"🧩 Splitting {len(documents)} documents into chunks...")
         chunks = self.text_splitter.split_documents(documents)
-        print(f"✅ Created {len(chunks)} chunks")
+        print(f"✅ Created {chunks} chunks................")
+      
+        for idx, chunk in enumerate(chunks):
+            chunk_record = ChunkMeta(
+                vectorstore_name=vector_store_name,
+                chunk_id=idx,
+                chunk_text=chunk.page_content,
+                chunk_metadata=json.dumps(chunk.metadata)
+            )
+            session.add(chunk_record)
 
-        # Prepare persistence paths
+        session.commit()  # commit all at once
+        print(f"💾 Saved {len(chunks)} chunks to DB")        # Prepare persistence paths
         vector_store_name = vector_store_name or f"{Path(filename).stem}_chroma"
         persist_dir = persist_directory or f"./chroma_db/{vector_store_name}"
         os.makedirs(persist_dir, exist_ok=True)
@@ -164,6 +233,21 @@ class RAGVectorStoreCreator:
             "filename": filename,
             "persist_directory": persist_dir
         }
+        """Create a RAG vector store from an uploaded file and persist chunks.
+
+        This reads the uploaded file, extracts text (PDF or TXT), splits into
+        chunks, stores chunk metadata in the database session, and persists a
+        Chroma vector store on disk.
+
+        Args:
+            file: FastAPI UploadFile to read.
+            session: SQLModel Session to write chunk metadata.
+            vector_store_name: Optional name for the vector store collection.
+            persist_directory: Optional directory path to persist the Chroma DB.
+
+        Returns:
+            A dictionary with metadata about the created vector store.
+        """
 
     def load_existing_vector_store(
         self,
@@ -181,6 +265,15 @@ class RAGVectorStoreCreator:
         )
         print(f"✅ Loaded Chroma DB: {vector_store_name}")
         return vector_store
+        """Load an existing Chroma vector store from disk.
+
+        Args:
+            vector_store_name: Name of the collection to load.
+            persist_directory: Optional custom persist directory.
+
+        Returns:
+            A Chroma vector store instance.
+        """
 
     def retrieve_chunks(self, vector_store, query: str, k: int = 4, retrieval_type: str = "similarity") -> List[Document]:
         if retrieval_type == "similarity":
@@ -189,9 +282,30 @@ class RAGVectorStoreCreator:
             return vector_store.max_marginal_relevance_search(query, k=k)
         else:
             raise ValueError(f"Unknown retrieval type: {retrieval_type}")
+        """Retrieve top-k chunks from a vector store using the chosen method.
+
+        Args:
+            vector_store: The Chroma/vector store instance.
+            query: Query string to search for.
+            k: Number of results to return.
+            retrieval_type: 'similarity' or 'mmr' to select the retrieval method.
+
+        Returns:
+            A list of Document objects matching the query.
+        """
 
     def retrieve_chunks_with_scores(self, vector_store, query: str, k: int = 4) -> List[tuple]:
         return vector_store.similarity_search_with_score(query, k=k)
+        """Retrieve top-k chunks along with their similarity scores.
+
+        Args:
+            vector_store: The Chroma/vector store instance.
+            query: Query string to search for.
+            k: Number of results to return.
+
+        Returns:
+            A list of tuples (Document, score).
+        """
 
     def retrieve_chunks_by_threshold(
         self, vector_store, query: str, score_threshold: float = 0.7, k: int = 10
@@ -199,6 +313,17 @@ class RAGVectorStoreCreator:
         docs_with_scores = vector_store.similarity_search_with_score(query, k=k)
         filtered_docs = [doc for doc, score in docs_with_scores if score <= (1 - score_threshold)]
         return filtered_docs
+        """Retrieve chunks filtered by a similarity score threshold.
+
+        Args:
+            vector_store: The Chroma/vector store instance.
+            query: Query string to search for.
+            score_threshold: Minimum similarity expectation (0-1).
+            k: Number of candidate results to consider before filtering.
+
+        Returns:
+            A list of Document objects whose scores meet the threshold.
+        """
 
     def retrieve_chunks_formatted(
         self, vector_store, query: str, k: int = 4, include_metadata: bool = True, include_scores: bool = False
@@ -218,10 +343,45 @@ class RAGVectorStoreCreator:
                 entry["similarity_score"] = float(score)
             results.append(entry)
         return results
+        """Retrieve chunks and return them as a list of formatted dicts.
+
+        Args:
+            vector_store: The Chroma/vector store instance.
+            query: Query string to search for.
+            k: Number of results to return.
+            include_metadata: Whether to include document metadata in results.
+            include_scores: Whether to include similarity scores.
+
+        Returns:
+            A list of dictionaries with keys like 'rank', 'content', and optionally
+            'metadata' and 'similarity_score'.
+        """
 
     def retrieve_as_context(self, vector_store, query: str, k: int = 4, separator: str = "\n\n---\n\n") -> str:
         docs = vector_store.similarity_search(query, k=k)
         return separator.join([doc.page_content for doc in docs])
+        """Return retrieved chunks concatenated as a single context string.
+
+        Args:
+            vector_store: The Chroma/vector store instance.
+            query: Query string to search for.
+            k: Number of results to include.
+            separator: String used to join the chunk texts.
+
+        Returns:
+            A single string containing the joined chunk contents.
+        """
 
     def get_retriever(self, vector_store, search_type: str = "similarity", k: int = 4, **kwargs):
         return vector_store.as_retriever(search_type=search_type, search_kwargs={"k": k, **kwargs})
+        """Return a retriever wrapper for the given vector store.
+
+        Args:
+            vector_store: The Chroma/vector store instance.
+            search_type: Retrieval algorithm type (e.g., 'similarity').
+            k: Default number of results to fetch via the retriever.
+            **kwargs: Additional search kwargs forwarded to the retriever.
+
+        Returns:
+            A retriever object bound to the vector store.
+        """
